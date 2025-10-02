@@ -14,6 +14,7 @@ from app.crud import (
     get_orders_by_user, 
     get_all_orders
 )
+from app.kafka.producer import event_producer  # Добавлен импорт
 
 app = FastAPI(title="Order Service", version="1.0.0")
 
@@ -21,6 +22,11 @@ app = FastAPI(title="Order Service", version="1.0.0")
 async def startup_event():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await event_producer.start()  # Запускаем Kafka producer
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await event_producer.stop()
 
 # Основные эндпоинты
 @app.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -29,17 +35,30 @@ async def create_new_order(
     db: AsyncSession = Depends(get_db)
 ):
     """Создать новый заказ"""
-    return await create_order(db, order)
-
-@app.get("/orders/{order_id}", response_model=OrderWithEvents)
-async def get_order_status(
-    order_id: int,
-    db: AsyncSession = Depends(get_db)
-):
-    """Получить статус заказа"""
-    db_order = await get_order(db, order_id)
-    if db_order is None:
-        raise HTTPException(status_code=404, detail="Order not found")
+    db_order = await create_order(db, order)
+    
+    # Отправляем событие в Kafka
+    order_data = {
+        "order_id": db_order.id,
+        "user_id": db_order.user_id,
+        "restaurant_id": db_order.restaurant_id,
+        "items": [
+            {
+                "dish_id": item["dish_id"],
+                "dish_name": item["dish_name"],
+                "quantity": item["quantity"],
+                "price": float(item["price"]),
+                "special_instructions": item.get("special_instructions")
+            }
+            for item in db_order.items
+        ],
+        "total_amount": float(db_order.total_amount),
+        "final_amount": float(db_order.final_amount),
+        "delivery_address": db_order.delivery_address,
+        "status": db_order.status
+    }
+    await event_producer.send_order_created(order_data)
+    
     return db_order
 
 @app.put("/orders/{order_id}/status", response_model=OrderResponse)
@@ -52,6 +71,16 @@ async def update_order_status_endpoint(
     db_order = await update_order_status(db, order_id, status_update)
     if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
+    
+    # Отправляем событие обновления статуса
+    status_data = {
+        "order_id": order_id,
+        "user_id": db_order.user_id,
+        "status": status_update.status,
+        "description": status_update.description or f"Order status updated to {status_update.status}"
+    }
+    await event_producer.send_order_status_updated(status_data)
+    
     return db_order
 
 @app.post("/orders/{order_id}/cancel", response_model=CancelOrderResponse)

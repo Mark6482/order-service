@@ -32,9 +32,8 @@ async def create_order(db: AsyncSession, order: OrderCreate):
     for item in order.items:
         total_amount += item.price * item.quantity
     
-    # Применяем скидки (здесь можно добавить логику применения скидок)
+    # Применяем скидки
     discount_amount = Decimal('0')
-    # Пример: скидка 10% для заказов свыше 1000 рублей
     if total_amount > Decimal('1000'):
         discount_amount = total_amount * Decimal('0.1')
     
@@ -44,13 +43,13 @@ async def create_order(db: AsyncSession, order: OrderCreate):
     items_for_json = []
     for item in order.items:
         item_dict = item.dict()
-        item_dict['price'] = float(item_dict['price'])  # Преобразуем Decimal в float
+        item_dict['price'] = float(item_dict['price'])
         items_for_json.append(item_dict)
     
     db_order = Order(
         user_id=order.user_id,
         restaurant_id=order.restaurant_id,
-        items=items_for_json,  # Используем преобразованные данные
+        items=items_for_json,
         delivery_address=order.delivery_address,
         special_instructions=order.special_instructions,
         total_amount=total_amount,
