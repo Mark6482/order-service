@@ -2,19 +2,21 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from decimal import Decimal
+import asyncio
+import uvicorn
 
 from app.database import get_db, engine, Base
 from app.schemas import (
     OrderCreate, OrderResponse, OrderStatusUpdate, OrderWithEvents,
-    CancelOrderRequest, CancelOrderResponse, TestDataResponse,
+    CancelOrderRequest, CancelOrderResponse,
     OrderStatus, OrderItem
 )
 from app.crud import (
-    get_order, create_order, update_order_status, cancel_order,
-    get_orders_by_user, 
-    get_all_orders
+    get_order_by_id, create_order, update_order_status, cancel_order,
+    get_orders_by_user
 )
-from app.kafka.producer import event_producer  # Добавлен импорт
+from app.kafka.producer import event_producer
+from app.kafka.consumer import event_consumer
 
 app = FastAPI(title="Order Service", version="1.0.0")
 
@@ -22,11 +24,15 @@ app = FastAPI(title="Order Service", version="1.0.0")
 async def startup_event():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    await event_producer.start()  # Запускаем Kafka producer
+    await event_producer.start()
+    
+    # Запускаем Kafka consumer для событий доставки
+    asyncio.create_task(event_consumer.start())
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await event_producer.stop()
+    await event_consumer.stop()
 
 # Основные эндпоинты
 @app.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -59,6 +65,17 @@ async def create_new_order(
     }
     await event_producer.send_order_created(order_data)
     
+    return db_order
+
+@app.get("/orders/{order_id}", response_model=OrderWithEvents)
+async def get_order_by_id_endpoint(
+    order_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить заказ по ID"""
+    db_order = await get_order_by_id(db, order_id)
+    if db_order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
     return db_order
 
 @app.put("/orders/{order_id}/status", response_model=OrderResponse)
@@ -96,6 +113,16 @@ async def cancel_order_endpoint(
             status_code=404, 
             detail="Order not found or cannot be cancelled in current status"
         )
+    
+    # Отправляем событие отмены заказа
+    status_data = {
+        "order_id": order_id,
+        "user_id": db_order.user_id,
+        "status": "cancelled",
+        "description": cancel_request.reason or "Order cancelled by user"
+    }
+    await event_producer.send_order_status_updated(status_data)
+    
     return CancelOrderResponse(
         message="Order cancelled successfully",
         order_id=order_id,
@@ -112,85 +139,7 @@ async def get_user_orders(
     """Получить заказы пользователя"""
     return await get_orders_by_user(db, user_id, skip, limit)
 
-# ТЕСТОВЫЕ ЭНДПОИНТЫ - только для разработки
-@app.get("/test/orders", response_model=List[OrderWithEvents])
-async def list_test_orders(
-    skip: int = 0,
-    limit: int = 100,
-    db: AsyncSession = Depends(get_db)
-):
-    """Список всех заказов (для тестирования)"""
-    return await get_all_orders(db, skip, limit)
-
-@app.post("/test/seed", response_model=TestDataResponse)
-async def seed_test_data(db: AsyncSession = Depends(get_db)):
-    """Создание тестовых данных"""
-    # Создаем тестовые заказы
-    order1 = await create_order(db, OrderCreate(
-        user_id=1,
-        restaurant_id=1,
-        items=[
-            OrderItem(
-                dish_id=1,
-                dish_name="Пицца Маргарита",
-                quantity=1,
-                price=Decimal('12.50'),
-                special_instructions="Без лука"
-            ),
-            OrderItem(
-                dish_id=2,
-                dish_name="Паста Карбонара", 
-                quantity=1,
-                price=Decimal('10.75')
-            )
-        ],
-        delivery_address={
-            "address": "ул. Тестовая, 123",
-            "lat": 55.7558,
-            "lng": 37.6173
-        },
-        special_instructions="Позвонить за 15 минут"
-    ))
-
-    order2 = await create_order(db, OrderCreate(
-        user_id=2,
-        restaurant_id=2,
-        items=[
-            OrderItem(
-                dish_id=3,
-                dish_name="Бургер",
-                quantity=2,
-                price=Decimal('8.50')
-            )
-        ],
-        delivery_address={
-            "address": "ул. Примерная, 45",
-            "lat": 55.7604,
-            "lng": 37.6252
-        }
-    ))
-
-    # Обновляем статусы для тестирования
-    await update_order_status(db, order1.id, OrderStatusUpdate(
-        status=OrderStatus.CONFIRMED,
-        description="Order confirmed by restaurant"
-    ))
-
-    await update_order_status(db, order2.id, OrderStatusUpdate(
-        status=OrderStatus.COOKING,
-        description="Order is being prepared"
-    ))
-
-    # Назначаем доставку для одного заказа
-    await assign_delivery_to_order(db, order1.id, 101)
-
-    return TestDataResponse(
-        message="Test data seeded successfully",
-        created_ids={
-            "orders": [order1.id, order2.id]
-        }
-    )
+# ТЕСТОВЫЕ ЭНДПОИНТЫ УБРАНЫ
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8004)

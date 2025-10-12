@@ -15,6 +15,10 @@ async def get_order(db: AsyncSession, order_id: int):
     )
     return result.scalar_one_or_none()
 
+async def get_order_by_id(db: AsyncSession, order_id: int):
+    """Получить заказ по ID"""
+    return await get_order(db, order_id)
+
 async def get_orders_by_user(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 100):
     result = await db.execute(
         select(Order)
@@ -73,7 +77,6 @@ async def create_order(db: AsyncSession, order: OrderCreate):
     
     return db_order
 
-# Остальные функции остаются без изменений
 async def update_order_status(db: AsyncSession, order_id: int, status_update: OrderStatusUpdate):
     db_order = await get_order(db, order_id)
     if not db_order:
@@ -117,13 +120,3 @@ async def cancel_order(db: AsyncSession, order_id: int, cancel_request: CancelOr
     await db.refresh(db_order)
     return db_order
 
-# Test CRUD functions
-async def get_all_orders(db: AsyncSession, skip: int = 0, limit: int = 100):
-    result = await db.execute(
-        select(Order)
-        .options(selectinload(Order.order_events))
-        .order_by(Order.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-    )
-    return result.scalars().all()
