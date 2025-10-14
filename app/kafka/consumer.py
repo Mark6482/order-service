@@ -2,7 +2,11 @@ import asyncio
 import json
 import logging
 from aiokafka import AIOKafkaConsumer
-from app.event_handlers import handle_delivery_assigned, handle_delivery_status_updated
+from app.event_handlers import (
+    handle_delivery_assigned,
+    handle_delivery_status_updated,
+    handle_cart_checked_out,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +19,7 @@ class KafkaEventConsumer:
         self.consumer = AIOKafkaConsumer(
             'delivery.assigned',
             'delivery.status.updated',
+            'cart.checked_out',
             bootstrap_servers=self.bootstrap_servers,
             group_id="order-service",
             enable_auto_commit=False,
@@ -43,6 +48,8 @@ class KafkaEventConsumer:
                         await handle_delivery_assigned(event_data)
                     elif event_type == 'delivery.status.updated':
                         await handle_delivery_status_updated(event_data)
+                    elif event_type == 'cart.checked_out':
+                        await handle_cart_checked_out(event_data)
                     else:
                         logger.warning(f"Unknown event type: {event_type}")
                     
