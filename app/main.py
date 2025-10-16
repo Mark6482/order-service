@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from decimal import Decimal
@@ -38,9 +38,20 @@ async def shutdown_event():
 @app.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_new_order(
     order: OrderCreate,
+    x_user_id: int | None = Header(None, alias="X-User-Id"),
     db: AsyncSession = Depends(get_db)
 ):
     """Создать новый заказ"""
+    # Используем user_id из заголовка API Gateway при наличии
+    if x_user_id is not None and order.user_id != x_user_id:
+        order = OrderCreate(
+            user_id=x_user_id,
+            restaurant_id=order.restaurant_id,
+            items=order.items,
+            delivery_address=order.delivery_address,
+            special_instructions=order.special_instructions,
+        )
+
     db_order = await create_order(db, order)
     
     # Отправляем событие в Kafka
@@ -139,7 +150,11 @@ async def get_user_orders(
     """Получить заказы пользователя"""
     return await get_orders_by_user(db, user_id, skip, limit)
 
-# ТЕСТОВЫЕ ЭНДПОИНТЫ УБРАНЫ
+
+@app.get("/health")
+async def health_check():
+    """Проверка здоровья сервиса"""
+    return {"status": "healthy", "service": "order-service"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8004)
