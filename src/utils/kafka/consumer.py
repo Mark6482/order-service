@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 from aiokafka import AIOKafkaConsumer
-from app.event_handlers import (
+
+from src.core.config import settings
+from src.utils.kafka.event_handlers import (
     handle_delivery_assigned,
     handle_delivery_status_updated,
     handle_cart_checked_out,
@@ -11,7 +13,7 @@ from app.event_handlers import (
 logger = logging.getLogger(__name__)
 
 class KafkaEventConsumer:
-    def __init__(self, bootstrap_servers: str = "localhost:9092"):
+    def __init__(self, bootstrap_servers: str = settings.KAFKA_BOOTSTRAP_SERVERS):
         self.bootstrap_servers = bootstrap_servers
         self.consumer = None
 
@@ -38,7 +40,7 @@ class KafkaEventConsumer:
                 try:
                     if not msg.value:
                         continue
-                        
+                    
                     event_data = msg.value
                     event_type = event_data.get('event_type')
                     

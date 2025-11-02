@@ -1,14 +1,12 @@
 import logging
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import AsyncSessionLocal
-from app.crud import update_order_status, get_order, create_order
-from app.schemas import OrderStatusUpdate, OrderCreate, OrderItem
-from app.kafka.producer import event_producer
+from src.db.session import AsyncSessionLocal
+from src.services.order import update_order_status, create_order
+from src.schemas.order import OrderStatusUpdate, OrderCreate, OrderItem
+from src.utils.kafka.producer import event_producer
 
 logger = logging.getLogger(__name__)
 
 async def handle_delivery_assigned(event_data: dict):
-    """Обработка события назначения курьера - обновляем статус заказа"""
     logger.info(f"Handling delivery_assigned event: {event_data}")
     
     try:
@@ -28,7 +26,6 @@ async def handle_delivery_assigned(event_data: dict):
         logger.error(f"Error handling delivery_assigned event: {e}", exc_info=True)
 
 async def handle_delivery_status_updated(event_data: dict):
-    """Обработка события обновления статуса доставки"""
     logger.info(f"Handling delivery_status_updated event: {event_data}")
     
     try:
@@ -37,7 +34,6 @@ async def handle_delivery_status_updated(event_data: dict):
         delivery_status = data['status']
         
         async with AsyncSessionLocal() as db:
-            # Синхронизируем статус заказа со статусом доставки
             order_status_map = {
                 "picked_up": "in_delivery",
                 "delivered": "delivered",
@@ -57,7 +53,6 @@ async def handle_delivery_status_updated(event_data: dict):
         logger.error(f"Error handling delivery_status_updated event: {e}", exc_info=True)
 
 async def handle_cart_checked_out(event_data: dict):
-    """Обработка события оформления корзины -> создаем заказ"""
     logger.info(f"Handling cart_checked_out event: {event_data}")
     try:
         data = event_data.get("data") or {}
@@ -71,7 +66,6 @@ async def handle_cart_checked_out(event_data: dict):
         delivery_address = data.get("delivery_address") or {}
         special_instructions = data.get("special_instructions")
 
-        # Требуем наличие user_id и restaurant_id для создания заказа
         if user_id is None or restaurant_id is None:
             logger.warning("cart_checked_out missing user_id or restaurant_id; skipping order creation")
             return
@@ -105,7 +99,6 @@ async def handle_cart_checked_out(event_data: dict):
 
         async with AsyncSessionLocal() as db:
             created = await create_order(db, order_create)
-            # Обновляем статус оплаты, так как заказ пришёл из оплаченного checkout
             try:
                 created.payment_status = "paid"
                 await db.commit()
@@ -114,7 +107,6 @@ async def handle_cart_checked_out(event_data: dict):
                 logger.error(f"Failed to set payment_status=paid for order {created.id}: {e}")
             logger.info(f"Created order {created.id} from cart {data.get('cart_id')}")
 
-            # Отправляем событие order.created для delivery-service
             try:
                 order_data = {
                     "order_id": created.id,

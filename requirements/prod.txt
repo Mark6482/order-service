@@ -1,0 +1,4 @@
+-r base.txt
+gunicorn==20.1.0
+uvloop==0.17.0
+httptools==0.6.0

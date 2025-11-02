@@ -1,48 +1,28 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
-from decimal import Decimal
-import asyncio
-import uvicorn
 
-from app.database import get_db, engine, Base
-from app.schemas import (
-    OrderCreate, OrderResponse, OrderStatusUpdate, OrderWithEvents,
-    CancelOrderRequest, CancelOrderResponse,
-    OrderStatus, OrderItem
+from src.api.deps import get_db
+from src.schemas.order import (
+OrderCreate, OrderResponse, OrderStatusUpdate,
+CancelOrderRequest, CancelOrderResponse
 )
-from app.crud import (
+from src.schemas.order_event import OrderWithEvents
+from src.services.order import (
     get_order_by_id, create_order, update_order_status, cancel_order,
     get_orders_by_user
 )
-from app.kafka.producer import event_producer
-from app.kafka.consumer import event_consumer
+from src.utils.kafka.producer import event_producer
 
-app = FastAPI(title="Order Service", version="1.0.0")
+router = APIRouter()
 
-@app.on_event("startup")
-async def startup_event():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await event_producer.start()
-    
-    # Запускаем Kafka consumer для событий доставки
-    asyncio.create_task(event_consumer.start())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await event_producer.stop()
-    await event_consumer.stop()
-
-# Основные эндпоинты
-@app.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_new_order(
     order: OrderCreate,
     x_user_id: int | None = Header(None, alias="X-User-Id"),
     db: AsyncSession = Depends(get_db)
 ):
     """Создать новый заказ"""
-    # Используем user_id из заголовка API Gateway при наличии
     if x_user_id is not None and order.user_id != x_user_id:
         order = OrderCreate(
             user_id=x_user_id,
@@ -78,7 +58,7 @@ async def create_new_order(
     
     return db_order
 
-@app.get("/orders/{order_id}", response_model=OrderWithEvents)
+@router.get("/{order_id}", response_model=OrderWithEvents)
 async def get_order_by_id_endpoint(
     order_id: int,
     db: AsyncSession = Depends(get_db)
@@ -89,7 +69,7 @@ async def get_order_by_id_endpoint(
         raise HTTPException(status_code=404, detail="Order not found")
     return db_order
 
-@app.put("/orders/{order_id}/status", response_model=OrderResponse)
+@router.put("/{order_id}/status", response_model=OrderResponse)
 async def update_order_status_endpoint(
     order_id: int,
     status_update: OrderStatusUpdate,
@@ -100,7 +80,6 @@ async def update_order_status_endpoint(
     if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     
-    # Отправляем событие обновления статуса
     status_data = {
         "order_id": order_id,
         "user_id": db_order.user_id,
@@ -111,7 +90,7 @@ async def update_order_status_endpoint(
     
     return db_order
 
-@app.post("/orders/{order_id}/cancel", response_model=CancelOrderResponse)
+@router.post("/{order_id}/cancel", response_model=CancelOrderResponse)
 async def cancel_order_endpoint(
     order_id: int,
     cancel_request: CancelOrderRequest,
@@ -121,11 +100,10 @@ async def cancel_order_endpoint(
     db_order = await cancel_order(db, order_id, cancel_request)
     if db_order is None:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail="Order not found or cannot be cancelled in current status"
         )
     
-    # Отправляем событие отмены заказа
     status_data = {
         "order_id": order_id,
         "user_id": db_order.user_id,
@@ -137,10 +115,10 @@ async def cancel_order_endpoint(
     return CancelOrderResponse(
         message="Order cancelled successfully",
         order_id=order_id,
-        status=OrderStatus.CANCELLED
+        status="cancelled"
     )
 
-@app.get("/users/{user_id}/orders", response_model=List[OrderWithEvents])
+@router.get("/users/{user_id}/orders", response_model=List[OrderWithEvents])
 async def get_user_orders(
     user_id: int,
     skip: int = 0,
@@ -149,12 +127,3 @@ async def get_user_orders(
 ):
     """Получить заказы пользователя"""
     return await get_orders_by_user(db, user_id, skip, limit)
-
-
-@app.get("/health")
-async def health_check():
-    """Проверка здоровья сервиса"""
-    return {"status": "healthy", "service": "order-service"}
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8004)

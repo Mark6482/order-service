@@ -1,12 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from app.models import Order, OrderEvent
-from app.schemas import OrderCreate, OrderStatusUpdate, CancelOrderRequest
 from decimal import Decimal
-from datetime import datetime
 
-# Order CRUD
+from src.db.models.order import Order
+from src.db.models.order_event import OrderEvent
+from src.schemas.order import OrderCreate, OrderStatusUpdate, CancelOrderRequest
+
 async def get_order(db: AsyncSession, order_id: int):
     result = await db.execute(
         select(Order)
@@ -16,7 +16,6 @@ async def get_order(db: AsyncSession, order_id: int):
     return result.scalar_one_or_none()
 
 async def get_order_by_id(db: AsyncSession, order_id: int):
-    """Получить заказ по ID"""
     return await get_order(db, order_id)
 
 async def get_orders_by_user(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 100):
@@ -31,19 +30,16 @@ async def get_orders_by_user(db: AsyncSession, user_id: int, skip: int = 0, limi
     return result.scalars().all()
 
 async def create_order(db: AsyncSession, order: OrderCreate):
-    # Рассчитываем стоимость заказа
     total_amount = Decimal('0')
     for item in order.items:
         total_amount += item.price * item.quantity
     
-    # Применяем скидки
     discount_amount = Decimal('0')
     if total_amount > Decimal('1000'):
         discount_amount = total_amount * Decimal('0.1')
     
     final_amount = total_amount - discount_amount
     
-    # Преобразуем Decimal в float для JSON сериализации
     items_for_json = []
     for item in order.items:
         item_dict = item.dict()
@@ -66,7 +62,6 @@ async def create_order(db: AsyncSession, order: OrderCreate):
     await db.commit()
     await db.refresh(db_order)
     
-    # Создаем начальное событие заказа
     order_event = OrderEvent(
         order_id=db_order.id,
         status="created",
@@ -84,7 +79,6 @@ async def update_order_status(db: AsyncSession, order_id: int, status_update: Or
     
     db_order.status = status_update.status
     
-    # Создаем событие изменения статуса
     order_event = OrderEvent(
         order_id=order_id,
         status=status_update.status,
@@ -101,14 +95,12 @@ async def cancel_order(db: AsyncSession, order_id: int, cancel_request: CancelOr
     if not db_order:
         return None
     
-    # Проверяем, можно ли отменить заказ (не все статусы можно отменить)
     cancellable_statuses = ["created", "confirmed", "cooking"]
     if db_order.status not in cancellable_statuses:
         return None
     
     db_order.status = "cancelled"
     
-    # Создаем событие отмены
     order_event = OrderEvent(
         order_id=order_id,
         status="cancelled",
@@ -119,4 +111,3 @@ async def cancel_order(db: AsyncSession, order_id: int, cancel_request: CancelOr
     await db.commit()
     await db.refresh(db_order)
     return db_order
-

@@ -18,7 +18,6 @@ class PaymentStatus(str, Enum):
     PAID = "paid"
     FAILED = "failed"
 
-# Order Item Schema
 class OrderItem(BaseModel):
     dish_id: int
     dish_name: str
@@ -26,7 +25,9 @@ class OrderItem(BaseModel):
     price: Decimal
     special_instructions: Optional[str] = None
 
-# Order Schemas
+    class Config:
+        from_attributes = True
+
 class OrderBase(BaseModel):
     user_id: int
     restaurant_id: int
@@ -55,21 +56,6 @@ class OrderResponse(OrderBase):
     class Config:
         from_attributes = True
 
-# Order Event Schemas
-class OrderEventResponse(BaseModel):
-    id: int
-    order_id: int
-    status: str
-    description: Optional[str]
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-# Composite Schemas
-class OrderWithEvents(OrderResponse):
-    order_events: List[OrderEventResponse] = []
-
 class CancelOrderRequest(BaseModel):
     reason: Optional[str] = "No reason provided"
 
@@ -77,8 +63,3 @@ class CancelOrderResponse(BaseModel):
     message: str
     order_id: int
     status: OrderStatus
-
-# Test Data Schemas
-class TestDataResponse(BaseModel):
-    message: str
-    created_ids: Optional[Dict] = None
