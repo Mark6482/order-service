@@ -2,10 +2,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from decimal import Decimal
+import logging
 
 from src.db.models.order import Order
 from src.db.models.order_event import OrderEvent
 from src.schemas.order import OrderCreate, OrderStatusUpdate, CancelOrderRequest
+
+logger = logging.getLogger(__name__)
 
 async def get_order(db: AsyncSession, order_id: int):
     result = await db.execute(
@@ -111,3 +114,30 @@ async def cancel_order(db: AsyncSession, order_id: int, cancel_request: CancelOr
     await db.commit()
     await db.refresh(db_order)
     return db_order
+
+async def cancel_orders_by_user_id(db: AsyncSession, user_id: int):
+    active_statuses = ["created", "confirmed", "cooking", "ready", "in_delivery"]
+    
+    result = await db.execute(
+        select(Order)
+        .filter(Order.user_id == user_id, Order.status.in_(active_statuses))
+    )
+    orders = result.scalars().all()
+    
+    cancelled_count = 0
+    for order in orders:
+        order.status = "cancelled"
+        
+        order_event = OrderEvent(
+            order_id=order.id,
+            status="cancelled",
+            description=f"Order cancelled due to user deletion (user_id: {user_id})"
+        )
+        db.add(order_event)
+        cancelled_count += 1
+    
+    if cancelled_count > 0:
+        await db.commit()
+        logger.info(f"Cancelled {cancelled_count} orders for user {user_id}")
+    
+    return cancelled_count

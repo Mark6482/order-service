@@ -8,6 +8,7 @@ from src.utils.kafka.event_handlers import (
     handle_delivery_assigned,
     handle_delivery_status_updated,
     handle_cart_checked_out,
+    handle_user_deleted
 )
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class KafkaEventConsumer:
             'delivery.assigned',
             'delivery.status.updated',
             'cart.checked_out',
+            'user-events',
             bootstrap_servers=self.bootstrap_servers,
             group_id="order-service",
             enable_auto_commit=False,
@@ -52,6 +54,8 @@ class KafkaEventConsumer:
                         await handle_delivery_status_updated(event_data)
                     elif event_type == 'cart.checked_out':
                         await handle_cart_checked_out(event_data)
+                    elif event_type == 'user.deleted': 
+                        await handle_user_deleted(event_data)
                     else:
                         logger.warning(f"Unknown event type: {event_type}")
                     

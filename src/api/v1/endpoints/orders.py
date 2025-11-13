@@ -34,7 +34,6 @@ async def create_new_order(
 
     db_order = await create_order(db, order)
     
-    # Отправляем событие в Kafka
     order_data = {
         "order_id": db_order.id,
         "user_id": db_order.user_id,

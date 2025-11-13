@@ -1,6 +1,6 @@
 import logging
 from src.db.session import AsyncSessionLocal
-from src.services.order import update_order_status, create_order
+from src.services.order import update_order_status, create_order, cancel_orders_by_user_id
 from src.schemas.order import OrderStatusUpdate, OrderCreate, OrderItem
 from src.utils.kafka.producer import event_producer
 
@@ -132,3 +132,18 @@ async def handle_cart_checked_out(event_data: dict):
                 logger.error(f"Failed to emit order.created for order {created.id}: {e}")
     except Exception as e:
         logger.error(f"Error handling cart_checked_out event: {e}", exc_info=True)
+
+async def handle_user_deleted(event_data: dict):
+    """Обрабатывает событие удаления пользователя"""
+    logger.info(f"Handling user_deleted event: {event_data}")
+    
+    try:
+        data = event_data['data']
+        user_id = data['id']
+        
+        async with AsyncSessionLocal() as db:
+            cancelled_count = await cancel_orders_by_user_id(db, user_id)
+            logger.info(f"Successfully cancelled {cancelled_count} orders for deleted user {user_id}")
+            
+    except Exception as e:
+        logger.error(f"Error handling user_deleted event: {e}", exc_info=True)
